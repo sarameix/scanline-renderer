@@ -1,6 +1,5 @@
 # *** scanline-renderer ***
 
-"""
 This Scanline Renderer was created for my CS430 course at Drexel University.
 
 This program has the following features:
@@ -20,4 +19,3 @@ This program takes parameters, but if none are specified, it will produce the sa
 
 This program was written in Python 2.7, so everything needed to run it is in the file scanlineRenderer.
 The code can be run using the command ./scanlineRenderer.
-"""
