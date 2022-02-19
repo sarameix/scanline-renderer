@@ -18,4 +18,5 @@ This program takes parameters, but if none are specified, it will produce the sa
    ./scanlineRenderer -f bound-sprellpsd.smf -j 0 -k 0 -o 500 -p 500 -x 0.0 -y 0.0 -z 1.0 -X 0.0 -Y 0.0 -Z 0.0 -q 0.0 -r 0.0 -w -1.0 -Q 0.0 -R 1.0 -W 0.0 -u -0.7 -v -0.7 -Y 0.7 -V 0.7 -F 0.6 -B -0.6 > out.pbm
 
 This program was written in Python 2.7, so everything needed to run it is in the file scanlineRenderer.
+A sample .smf file is included in this repository to be used as sample input for the script.
 The code can be run using the command ./scanlineRenderer.
