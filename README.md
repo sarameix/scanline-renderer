@@ -1,4 +1,4 @@
-# Scanline Renderer
+# Scanline Rendering Engine
 
 This Scanline Renderer was created for my CS430 course at Drexel University.
 
