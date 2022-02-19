@@ -1,0 +1,1322 @@
+#!/usr/bin/env python
+
+# Sara Meixner
+# CS 430-001
+# Dr. David Breen
+# Assignment 05 - Z-Buffer Rendering
+
+# *** Importing Modules ***
+
+import sys
+from sys import argv
+import math
+
+
+# *** Creating Class for Edge Bucket ***
+
+class vertex:
+
+	# Initializing Vertex
+	def __init__(self, x, y, z):
+		self.x = x
+		self.y = y
+		self.z = z
+		self.w = 1.0
+
+	# Printing Vertex
+	def printVertex(self):
+		vertString = '[' + str(self.x)
+		vertString += ', ' + str(self.y)
+		vertString += ', ' + str(self.z)
+		vertString += ', ' + str(self.w) + ']'
+		print vertString
+
+
+class face:
+
+	# Initializing Face
+	def __init__(self, vertex1, vertex2, vertex3):
+		self.vertex1 = vertex1 - 1
+		self.vertex2 = vertex2 - 1
+		self.vertex3 = vertex3 - 1
+
+
+class mesh:
+
+	# Initializing Mesh
+	def __init__(self):
+		self.vertexList = []
+		self.faceList = []
+
+	# Adding Vertex to List
+	def addVertex(self, vertex):
+		self.vertexList.append(vertex)
+
+	# Adding Face to List
+	def addFace(self, face):
+		self.faceList.append(face)
+
+	# Getting Vertex Information for Face
+	def getFace(self, face):
+		v1 = self.vertexList[face.vertex1]
+		v2 = self.vertexList[face.vertex2]
+		v3 = self.vertexList[face.vertex3]
+		return [v1, v2, v3]
+
+	# Printing Vertices in Face
+	def printFace(self, face):
+		v1 = self.vertexList[face.vertex1]
+		v2 = self.vertexList[face.vertex2]
+		v3 = self.vertexList[face.vertex3]
+		v1.printVertex()
+		v2.printVertex()
+		v3.printVertex()
+
+	# Applying Normalizing Matrix to All Vertices
+	def applyNMatrix(self, NMatrix):
+		for i in range(0, len(self.vertexList)):
+			# Creating Matrix for Vertex
+			vertex = self.vertexList[i]
+			vertMatrix = [[0],[0],[0],[1]]
+			vertMatrix[0][0] = vertex.x
+			vertMatrix[1][0] = vertex.y
+			vertMatrix[2][0] = vertex.z
+			vertMatrix[3][0] = vertex.w
+
+			# Multiplying by Normalizing Matrix
+			result = matrixMultiply(NMatrix, vertMatrix)
+
+			# Updating Vertex in List
+			vertex.x = result[0][0]
+			vertex.y = result[1][0]
+			vertex.z = result[2][0]
+			vertex.w = result[3][0]
+			self.vertexList[i] = vertex
+
+	# Applying Projection to Coordinates for Perspective Projection
+	def applyProjection(self, d):
+		for i in range(0, len(self.vertexList)):
+			# Creating Variables for Vertex
+			vertex = self.vertexList[i]
+			xPos = vertex.x
+			yPos = vertex.y
+			zPos = vertex.z
+
+			# Doing Calculations
+			denominator = zPos / d
+			xPos = xPos / denominator
+			yPos = yPos / denominator
+
+			# Adding These Values Back into Vertex List
+			vertex.x = xPos
+			vertex.y = yPos
+
+
+class edgeBucket:
+
+	# Initializing Edge Bucket
+	def __init__(self, yMin, yMax, xPos, sign, slope, dX, dY):
+		self.yMin = yMin
+		self.yMax = yMax
+		self.xPos = xPos
+		self.sign = sign
+		self.slope = slope
+		self.dX = dX
+		self.dY = dY
+		self.sum = 0
+
+
+	# Printing Out Contents of Edge Bucket
+	def printEdge(self):
+		print "yMin: " + str(self.yMin)
+		print "yMax: " + str(self.yMax)
+		print "xPos: " + str(self.xPos)
+		print "Sign: " + str(self.sign)
+		print "Slope: " + str(self.slope)
+		print "dX: " + str(self.dX)
+		print "dY: " + str(self.dY)
+		print "Sum: " + str(self.sum)
+
+
+# *** Creating Line Drawing Class ***
+
+class drawing:
+
+
+    # Initializing Blank Line Drawing
+    def __init__(self, minX, minY, maxX, maxY, frontFace, backFace):
+
+        # Initializing Attributes for Given Variables
+        self.minX = int(round(minX))
+        self.minY = int(round(minY))
+        self.maxX = int(round(maxX))
+        self.maxY = int(round(maxY))
+        self.xPixels = int(round(maxX - minX + 1))
+        self.yPixels = int(round(maxY - minY + 1))
+	self.frontFace = frontFace
+	self.backFace = backFace
+
+        # Creating Empty Pixel Matrix
+        self.pixelMatrix = []
+	self.zBuffer = []
+        for i in range(0, self.yPixels):
+            pixelMatrixRow = []
+	    zMatrixRow = []
+            for j in range(0, self.xPixels):
+                pixelMatrixRow.append('0')
+		zMatrixRow.append(-1)
+            self.pixelMatrix.append(pixelMatrixRow)
+	    self.zBuffer.append(zMatrixRow)
+
+
+    # Clipping Line to Viewport
+    def clipLine(self, x1, y1, x2, y2):
+
+        # Defining Codes for Regions
+        WINDOW = 0
+        WL = 1
+        WR = 2
+        WB = 4
+        WT = 8
+
+        # Determining the Region Code for First Endpoint
+
+        # Computing Code for Begin
+        codeStart = WINDOW
+        if x1 < self.minX:
+            codeStart |= WL
+        elif x1 > self.maxX:
+            codeStart |= WR
+        if y1 < self.minY:
+            codeStart |= WB
+        elif y1 > self.maxY:
+            codeStart |= WT
+
+        # Computing Code for End
+        codeEnd = WINDOW
+        if x2 < self.minX:
+            codeEnd = codeEnd | WL
+        elif x2 > self.maxX:
+            codeEnd = codeEnd | WR
+        if y2 < self.minY:
+            codeEnd = codeEnd | WB
+        elif y2 > self.maxY:
+            codeEnd = codeEnd | WT
+
+        # Setting Boolean for Line in Window
+        isInside = False
+
+        # Using the Cohen Sutherland Algorithm
+        while (codeStart | codeEnd) != 0:
+
+            # Reject Line and Return None if Outside Window
+            if (codeStart & codeEnd) != 0:
+                return None, None, None, None
+
+            # Clipping Line if Partially Inside Window
+            codeClip = codeStart or codeEnd
+
+            # If Line is Horizontal
+            if (y2 - y1) == 0:
+                if codeClip & WL:
+                    x = self.minX
+                    y = y1
+                elif codeClip & WR:
+                    x = self.maxX
+                    y = y1
+
+	    # If Line is Vertical
+            elif (x2 - x1) == 0:
+                if codeClip & WT:
+                    x = x1
+                    y = self.maxY
+                elif codeClip & WB:
+                    x = x1
+                    y = self.minY
+
+	    # If Line is Diagonal
+            else:
+                if codeClip & WT:
+                    x = x1 + (x2 - x1) * (self.maxY - y1) / (y2 - y1)
+                    y = self.maxY
+                elif codeClip & WB:
+                    x = x1 + (x2 - x1) * (self.minY - y1) / (y2 - y1)
+                    y = self.minY
+                elif codeClip & WR:
+                    x = self.maxX
+                    y = y1 + (y2 - y1) * (self.maxX - x1) / (x2 - x1)
+                elif codeClip & WL:
+                    x = self.minX
+                    y = y1 + (y2 - y1) * (self.minX - x1) / (x2 - x1)
+
+	    # Replacing Respective Endpoint with New Code
+
+	    # Replace Starting Endpoint
+            if codeClip == codeStart:
+                x1, y1 = x, y
+                codeStart = WINDOW
+                if x1 < self.minX:
+                    codeStart |= WL
+                elif x1 > self.maxX:
+                    codeStart |= WR
+                if y1 < self.minY:
+                    codeStart |= WB
+                elif y1 > self.maxY:
+                    codeStart |= WT
+
+	    # Replace Ending Endpoint
+            elif codeClip == codeEnd:
+                x2, y2 = x, y
+                codeEnd = WINDOW
+                if x2 < self.minX:
+                    codeEnd = codeEnd | WL
+                elif x2 > self.maxX:
+                    codeEnd = codeEnd | WR
+                if y2 < self.minY:
+                    codeEnd = codeEnd | WB
+                elif y2 > self.maxY:
+                    codeEnd = codeEnd | WT
+
+        # Returning Clipped Endpoints
+        return x1, y1, x2, y2
+
+
+    # Adding a Line to the Pixel Matrix
+    def drawLine(self, x1, y1, x2, y2):
+
+        # Switching Parameters if Start is Greater Than End
+        if (x1 > x2) or (y1 > y2):
+            tempX1 = x1
+            x1 = x2
+            x2 = tempX1
+            tempY1 = y1
+            y1 = y2
+            y2 = tempY1
+
+        # Checking if Line is Horizontal or Vertical and Calculating Slope
+
+        # Initializing Booleans to False
+        isVertical = False
+        isHorizontal = False
+
+        # Setting Boolean Values and Determining Slope
+        if (x2 - x1) == 0:
+            isVertical = True
+            slope = 0
+        elif (y2 - y1) == 0:
+            isHorizontal = True
+            slope = 0
+        else:
+            slope = float(y2 - y1) / float(x2 - x1)
+
+        # Calculating Change in Pixels on Each Axis
+
+        #  If Absolute Value is Less Than 1
+        if (slope < 1) and (slope > -1):
+            changeX = 1
+            # If Line is Horizontal
+            if isHorizontal:
+                changeY = 0
+            else:
+                changeY = slope
+
+        # If Absolute Value is Greater Than Or Equal To 1
+        else:
+            # If Line is Vertical
+            if isVertical:
+                changeX = 0
+            else:
+                changeX = 1 / slope
+            changeY = 1
+
+        # Mapping Pixels Based on Endpoints
+
+        # Initializing Starting Point
+        currentX = x1
+        currentY = y1
+
+        # If Line is Diagonal
+        if (not isVertical) and (not isHorizontal):
+	    # If Slope is Positive
+            if slope > 0.0:
+                if (x1 > x2) or (y1 > y2):
+                    tempX1 = x1
+                    x1 = x2
+                    x2 = tempX1
+                    tempY1 = y1
+                    y1 = y2
+                    y2 = tempY1
+                while (currentX < x2) and (currentY < y2):
+                    roundedX = round(currentX)
+                    roundedY = round(currentY)
+                    self.pixelMatrix[int(roundedY - self.minY)][int(roundedX - self.minX)] = 1
+                    currentX += changeX
+                    currentY += changeY
+	    # If Slope is Negative
+            else:
+                if (currentX > x2) and (currentY < y2):
+                    tempX1 = currentX
+                    currentX = x2
+                    x2 = tempX1
+                    tempY1 = currentY
+                    currentY = y2
+                    y2 = tempY1
+                if changeX > 0:
+                    changeX = changeX * -1
+                if changeY < 0:
+                    changeY = changeY * -1
+                while (currentX < x2) and (currentY > y2):
+                    roundedX = round(currentX)
+                    roundedY = round(currentY)
+                    self.pixelMatrix[int(roundedY - self.minY)][int(roundedX - self.minX)] = 1
+                    currentX -= changeX
+                    currentY -= changeY
+
+        # If Line is Vertical
+        elif isVertical:
+            while (currentY < y2):
+                roundedX = round(currentX)
+                roundedY = round(currentY)
+                self.pixelMatrix[int(roundedY - self.minY)][int(roundedX - self.minX)] = 1
+                currentY += 1
+
+        # If Line is Horizontal
+        else:
+            while (currentX < x2):
+                roundedX = round(currentX)
+                roundedY = round(currentY)
+                self.pixelMatrix[int(roundedY - self.minY)][int(roundedX - self.minX)] = 1
+                currentX += 1
+
+
+    # Clipping Line to Viewport
+    def clipPolygon(self, polygon, lowerX, lowerY, upperX, upperY):
+
+	# * Defining Helper Function for Sutherland-Hodgman *
+
+	# Definition for Intersection Function
+	def intersect(first, second, boundary):
+
+		# Setting X and Y Variables
+		x1 = first[0]
+		y1 = first[1]
+		x2 = second[0]
+		y2 = second[1]
+		bound1 = boundary[0]
+		bound2 = boundary[1]
+
+		# Creating Variable for Intersection Point
+		intersectVert = []
+
+		# Calculating Slope of Boundary Line and Intersection
+
+		# If Boundary is Horizontal
+		if bound1[1] == bound2[1]:
+			interX = first[0] + (bound1[1] - first[1]) * (second[0] - first[0]) / (second[1] - first[1])
+			interY = bound1[1]
+
+		# If Boundary is Vertical
+		else:
+			interX = bound1[0]
+			interY = first[1] + (bound1[0] - first[0]) * (second[1] - first[1]) / (second[0] - first[0])
+
+		# Adding Intersection Calculations to Vertex
+		intersectVert.append(interX)
+		intersectVert.append(interY)
+
+		# Returning New Vertex
+		return intersectVert
+
+	# Definition for Checking if Vertex is Inslide Boundary
+	def isInside(vertex, boundary, boundaries):
+
+		# Declaring Variables
+		x = vertex[0]
+		y = vertex[1]
+		top = boundaries[0]
+		bottom = boundaries[1]
+		left = boundaries[2]
+		right = boundaries[3]
+
+		# Checking if Vertex is Inside
+		if (boundary == top) and (y < upperY):
+			return True
+		elif (boundary == bottom) and (y > lowerY):
+			return True
+		elif (boundary == left) and (x > lowerX):
+			return True
+		elif (boundary == right) and (x < upperX):
+			return True
+		return False
+
+	# * Using Sutherland-Hodgman Algorithm to Clop Polygon *
+
+	# Creating Empty List for Clipped Vertices
+	clippedPolygon = []
+
+	# Creating Four Clipping Edges
+	bottomLeft = [lowerX, lowerY]
+	bottomRight = [upperX, lowerY]
+	topLeft = [lowerX, upperY]
+	topRight = [upperX, upperY]
+	top = [topLeft, topRight]
+	bottom = [bottomLeft, bottomRight]
+	left = [bottomLeft, topLeft]
+	right = [bottomRight, topRight]
+	boundaries = [top, bottom, left, right]
+
+	# Iterating Through and Clipping Vertices
+	if len(polygon) == 0:
+		return clippedPolygon
+
+	# Clipping Polygon on Boundary at a Time
+	for boundary in boundaries:
+
+		# Ending Loop if No Vertices in Polygon
+		if len(polygon) == 0:
+			break
+
+		# Continuing Loop if Vertices in Polygon
+		start = polygon[-1]
+		for j in range(0, len(polygon)):
+			end = polygon[j]
+			if isInside(end, boundary, boundaries):
+				# Case 1: Both Inside
+				if isInside(start, boundary, boundaries):
+					clippedPolygon.append(end)
+				# Case 4: Start Outside and End Inside
+				else:
+					inter = intersect(start, end, boundary)
+					clippedPolygon.append(inter)
+					clippedPolygon.append(end)
+			elif isInside(start, boundary, boundaries):
+				# Case 2: Start Inside and End Outside
+				inter = intersect(start, end, boundary)
+				clippedPolygon.append(inter)
+			# Case 3: Both Outside
+			# Advance to Next Pair of Vertices
+			start = end
+
+		# Setting Polygon Variables if not Last Iteration
+		if boundary != right:
+			polygon = clippedPolygon
+			clippedPolygon = []
+
+	# Returning Clipped Polygon Vertices
+	return clippedPolygon
+
+
+    # Scan Filling Algorithm for Polygons
+    def scanFill(self, polygon, color, zPRP):
+
+	# Stopping the Function if Empty Polygon
+	if len(polygon) == 0:
+	    return
+
+	# Sorting Edges by yMin
+	def sortByY(edgeList):
+	    for i in range(1, len(edgeList)):
+		current = edgeList[i]
+		j = i-1
+		while (j >= 0) and (current.yMin < edgeList[j].yMin):
+		    edgeList[j+1] = edgeList[j]
+		    j -= 1
+		edgeList[j+1] = current
+
+	    return edgeList
+
+        # Creating Edge List of Edge Buckets
+	def createEdgeList(polygon):
+	    edgeList = []
+
+	    # Deleting Last Vertex if Same as First
+	    if polygon[0] == polygon[-1]:
+	    	del polygon[-1]
+
+	    for i in range(0, len(polygon)):
+	        # Getting Vertices of Edge
+	        vert1 = polygon[i-1]
+  	        vert2 = polygon[i]
+
+		# Converting Vertex Information to Floats
+		vert1[0] = float(vert1[0])
+		vert1[1] = float(vert1[1])
+		vert2[0] = float(vert2[0])
+		vert2[1] = float(vert2[1])
+
+	        # Setting Attibutes for Edge Bucket
+
+	        # Setting yMin, yMax, and xPos
+	        if vert1[1] < vert2[1]:
+	    	    yMin = vert1[1]
+	    	    yMax = vert2[1]
+		    xPos = vert1[0]
+	        else:
+		    yMin = vert2[1]
+		    yMax = vert1[1]
+		    xPos = vert2[0]
+
+	        # Setting Slope Attributes
+	        dX = vert2[0] - vert1[0]
+	        dY = vert2[1] - vert1[1]
+	        if (dX == 0) or (dY == 0):
+		    sign = 0
+		    slope = 0
+	        elif dX/dY < 0:
+		    sign = -1
+		    slope = dX/dY
+	        else:
+		    sign = 1
+		    slope = dX/dY
+
+	        # initializing Edge Bucket
+	        currentEdge = edgeBucket(yMin, yMax, xPos, sign, slope, dX, dY)
+
+	        # Appending Edge Bucket to Edge List
+	        edgeList.append(currentEdge)
+
+	    # Sorting and Returning Edge List by yMin
+	    edgeList = sortByY(edgeList)
+	    return edgeList
+
+	# Helping Function to get Z Value at Certain Pixel
+	def getZ(polygon, xStart, yStart, xEnd, yEnd, xCurrent, yCurrent):
+
+	    # Intializing Variables for Polygon Edges
+	    x1 = polygon[0][0]
+	    y1 = polygon[0][1]
+	    z1 = polygon[0][2]
+	    x2 = polygon[1][0]
+	    y2 = polygon[1][1]
+	    z2 = polygon[1][2]
+	    x3 = polygon[2][0]
+	    y3 = polygon[2][1]
+	    z3 = polygon[2][2]
+
+	    # Doing Calculations for Start Line
+	    startLen1 = vectorLength((xStart - x1), (yStart - y1), 0)
+	    startLen2 = vectorLength((x2 - x1), (y2 - y1), 0)
+	    zStart = (z1 + (startLen1 / startLen2) * (z2 - z1))
+
+	    # Doing Calculations for End Line
+	    endLen1 = vectorLength((xEnd - x1), (yEnd - y1), 0)
+	    endLen2 = vectorLength((x3 - x1), (y3 - y1), 0)
+	    zEnd = (z1 + (endLen1 / endLen2) * (z3 - z1))
+
+	    # Doing Calculations for Current Line
+	    currentLen1 = vectorLength((xCurrent - xStart), (yCurrent - yStart), 0)
+	    currentLen2 = vectorLength((xEnd - xStart), (yEnd - yStart), 0)
+
+	    # Finally Calculating Z
+	    if currentLen2 == 0:
+	        currentLen2 = 1
+	        zCurrent = zStart + (currentLen1 / currentLen2) * (zEnd - zStart)
+		#print zCurrent
+	    zCurrent = zStart + (currentLen1 / currentLen2) * (zEnd - zStart)
+
+	    # Returning Calculated Z Value
+	    return zCurrent
+
+	# Calculating Shade for Pixel Based on Z Value and Color
+	def getShade(z, color, zPRP):
+	    # Setting Up Shade Key
+	    if color == 'red':
+	    	shadeKey = '123456789abcdefghijk'
+	    elif color == 'green':
+	    	shadeKey = 'lmnopqrstuvwxyzABCDE'
+	    else:
+	    	shadeKey = 'FGHIJKLMNOPQRSTUVWXY'
+
+	    # Calculating Low and High Values
+	    if isParallel:
+	        near = 0
+		far = -1
+	    else:
+	        near = (zPRP - self.frontFace) / (self.backFace - zPRP)
+		far = -1
+
+	    # Getting Shade Value with Z and Key
+	    shade = int(round(20 * (pz - far) / (near - far)))
+	    if shade >= 20:
+	        shade = 19
+	    elif shade < 0:
+	        shade = 0
+	    finalShade = shadeKey[shade]
+
+	    # Returning Final Value
+	    return finalShade
+
+	# Using Helper Functions to Create Sorted List of Edges
+	edgeList = createEdgeList(polygon)
+
+	# Initializing Starting Scan Line and Active List
+	scanLine = round(edgeList[0].yMin)
+	finalScanLine = round(edgeList[-1].yMax)
+	activeList = []
+
+	# Removing Horizontal Lines
+	horizList = []
+	for edge in edgeList:
+	    if edge.dY == 0:
+	    	edgeList.remove(edge)
+		horizList.append(edge)
+
+	# Scan Filling Loop
+	while scanLine <= finalScanLine:
+
+	    # Checking and Removing if Edges on Active List Need Removal
+	    if activeList:
+	        removeList = []
+	    	for activeIndex in range(0, len(activeList)):
+	    	    if scanLine >= activeList[activeIndex].yMax:
+			removeList.insert(0, activeIndex)
+		for removeIndex in removeList:
+		    del activeList[removeIndex]
+
+	    # If Edges Have yMin is Equal to the Scan Line, Add to Active List
+	    removeList = []
+	    for edge in edgeList:
+	        if scanLine >= edge.yMin:
+		    activeList.append(edge)
+	    for index in range(0, len(edgeList)):
+	        if scanLine >= edgeList[index].yMin:
+		    removeList.insert(0, index)
+	    for removeIndex in removeList:
+		del edgeList[removeIndex]
+
+	    # Sort Edges in Active List by X
+	    for i in range(1, len(activeList)):
+		current = activeList[i]
+		j = i-1
+		while (j >= 0) and (current.xPos < activeList[j].xPos):
+		    activeList[j+1] = activeList[j]
+		    j -= 1
+		activeList[j+1] = current
+
+	    # Fill Scan Lines Between Edge Pairs
+	    for index in range(0, len(activeList)):
+	        if index % 2 == 0 and index+1 != len(activeList):
+	    	    start = int(round(activeList[index].xPos))
+		    end = int(round(activeList[index+1].xPos))
+		    for pixel in range(start, end+1):
+
+			# Filling in Pixels Based on ZBuffer
+
+			# Getting Current Z Value
+			pz = getZ(polygon, start, scanLine, end, scanLine, pixel, scanLine)
+			shade = getShade(pz, color, zPRP)
+			if pz > self.zBuffer[int(scanLine)][pixel] and pz < self.frontFace:
+			    self.zBuffer[int(scanLine)][pixel] = pz
+			    self.pixelMatrix[int(scanLine)][pixel] = shade
+
+	    # Increment Current Scan Line
+	    scanLine += 1
+
+	    # Increment All X's in Active List Edges Based on Slope
+	    for edge in activeList:
+	        if edge.dX != 0:
+		    edge.xPos += edge.slope
+		# Do NOT Increment if Slope is Vertical
+		else:
+		    edge.xPos += 0
+
+# Outputting Pixel Matrix to a .pbm File
+    def writeToXPM(self):
+
+	# Declaring Variables
+	width = str(self.xPixels)
+	height = str(self.yPixels)
+
+        # Adding Header to File
+        print "/*XPM*/"
+	print "static char *sco100[] = { "
+	print "/* width height num_colors chars_per_pixel */ "
+	print ("\""+ width + " " + height + " " + "61" + " " + "1" + "\"" + ",")
+	print "/*colors*/"
+
+	# Adding Value of Black
+	print ("\""+ "0" + " " + "c" + " " + "#" + "000000" + "\"" + ",")
+
+	# Adding 20 Shades of Red
+	print ("\""+ "1" + " " + "c" + " " + "#" + "0d0000" + "\"" + "," )
+	print ("\""+ "2" + " " + "c" + " " + "#" + "1a0000" + "\"" + "," )
+	print ("\""+ "3" + " " + "c" + " " + "#" + "270000" + "\"" + "," )
+	print ("\""+ "4" + " " + "c" + " " + "#" + "340000" + "\"" + "," )
+	print ("\""+ "5" + " " + "c" + " " + "#" + "410000" + "\"" + "," )
+	print ("\""+ "6" + " " + "c" + " " + "#" + "4e0000" + "\"" + "," )
+	print ("\""+ "7" + " " + "c" + " " + "#" + "5b0000" + "\"" + "," )
+	print ("\""+ "8" + " " + "c" + " " + "#" + "680000" + "\"" + "," )
+	print ("\""+ "9" + " " + "c" + " " + "#" + "750000" + "\"" + "," )
+	print ("\""+ "a" + " " + "c" + " " + "#" + "820000" + "\"" + "," )
+	print ("\""+ "b" + " " + "c" + " " + "#" + "8f0000" + "\"" + "," )
+	print ("\""+ "c" + " " + "c" + " " + "#" + "9c0000" + "\"" + "," )
+	print ("\""+ "d" + " " + "c" + " " + "#" + "a90000" + "\"" + "," )
+	print ("\""+ "e" + " " + "c" + " " + "#" + "b60000" + "\"" + "," )
+	print ("\""+ "f" + " " + "c" + " " + "#" + "c30000" + "\"" + "," )
+	print ("\""+ "g" + " " + "c" + " " + "#" + "d00000" + "\"" + "," )
+	print ("\""+ "h" + " " + "c" + " " + "#" + "dd0000" + "\"" + "," )
+	print ("\""+ "i" + " " + "c" + " " + "#" + "ea0000" + "\"" + "," )
+	print ("\""+ "j" + " " + "c" + " " + "#" + "f70000" + "\"" + "," )
+	print ("\""+ "k" + " " + "c" + " " + "#" + "ff0000" + "\"" + "," )
+
+	# Adding 20 Shades of Green
+	print ("\""+ "l" + " " + "c" + " " + "#" + "000d00" + "\"" + "," )
+	print ("\""+ "m" + " " + "c" + " " + "#" + "001a00" + "\"" + "," )
+	print ("\""+ "n" + " " + "c" + " " + "#" + "002700" + "\"" + "," )
+	print ("\""+ "o" + " " + "c" + " " + "#" + "003400" + "\"" + "," )
+	print ("\""+ "p" + " " + "c" + " " + "#" + "004100" + "\"" + "," )
+	print ("\""+ "q" + " " + "c" + " " + "#" + "004e00" + "\"" + "," )
+	print ("\""+ "r" + " " + "c" + " " + "#" + "005b00" + "\"" + "," )
+	print ("\""+ "s" + " " + "c" + " " + "#" + "006800" + "\"" + "," )
+	print ("\""+ "t" + " " + "c" + " " + "#" + "007500" + "\"" + "," )
+	print ("\""+ "u" + " " + "c" + " " + "#" + "008200" + "\"" + "," )
+	print ("\""+ "v" + " " + "c" + " " + "#" + "008f00" + "\"" + "," )
+	print ("\""+ "w" + " " + "c" + " " + "#" + "009c00" + "\"" + "," )
+	print ("\""+ "x" + " " + "c" + " " + "#" + "00a900" + "\"" + "," )
+	print ("\""+ "y" + " " + "c" + " " + "#" + "00b600" + "\"" + "," )
+	print ("\""+ "z" + " " + "c" + " " + "#" + "00c300" + "\"" + "," )
+	print ("\""+ "A" + " " + "c" + " " + "#" + "00d000" + "\"" + "," )
+	print ("\""+ "B" + " " + "c" + " " + "#" + "00dd00" + "\"" + "," )
+	print ("\""+ "C" + " " + "c" + " " + "#" + "00ea00" + "\"" + "," )
+	print ("\""+ "D" + " " + "c" + " " + "#" + "00f700" + "\"" + "," )
+	print ("\""+ "E" + " " + "c" + " " + "#" + "00ff00" + "\"" + "," )
+
+	# Adding 20 Shades of Blue
+	print ("\""+ "F" + " " + "c" + " " + "#" + "00000d" + "\"" + "," )
+	print ("\""+ "G" + " " + "c" + " " + "#" + "00001a" + "\"" + "," )
+	print ("\""+ "H" + " " + "c" + " " + "#" + "000027" + "\"" + "," )
+	print ("\""+ "I" + " " + "c" + " " + "#" + "000034" + "\"" + "," )
+	print ("\""+ "J" + " " + "c" + " " + "#" + "000041" + "\"" + "," )
+	print ("\""+ "K" + " " + "c" + " " + "#" + "00004e" + "\"" + "," )
+	print ("\""+ "L" + " " + "c" + " " + "#" + "00005b" + "\"" + "," )
+	print ("\""+ "M" + " " + "c" + " " + "#" + "000068" + "\"" + "," )
+	print ("\""+ "N" + " " + "c" + " " + "#" + "000075" + "\"" + "," )
+	print ("\""+ "O" + " " + "c" + " " + "#" + "000082" + "\"" + "," )
+	print ("\""+ "P" + " " + "c" + " " + "#" + "00008f" + "\"" + "," )
+	print ("\""+ "Q" + " " + "c" + " " + "#" + "00009c" + "\"" + "," )
+	print ("\""+ "R" + " " + "c" + " " + "#" + "0000a9" + "\"" + "," )
+	print ("\""+ "S" + " " + "c" + " " + "#" + "0000b6" + "\"" + "," )
+	print ("\""+ "T" + " " + "c" + " " + "#" + "0000c3" + "\"" + "," )
+	print ("\""+ "U" + " " + "c" + " " + "#" + "0000d0" + "\"" + "," )
+	print ("\""+ "V" + " " + "c" + " " + "#" + "0000dd" + "\"" + "," )
+	print ("\""+ "W" + " " + "c" + " " + "#" + "0000ea" + "\"" + "," )
+	print ("\""+ "X" + " " + "c" + " " + "#" + "0000f7" + "\"" + "," )
+	print ("\""+ "Y" + " " + "c" + " " + "#" + "0000ff" + "\"" + "," )
+
+        # Finishing Header
+	print "/*pixels*/"
+
+	# Outputting Frame Buffer
+	for i in range(self.yPixels-1, -1, -1):
+	    component1 = "\""
+	    row = self.pixelMatrix[i]
+	    component2 = ""
+	    for j in range(0, self.xPixels):
+		component2 += str(row[j])
+	    if (i == (self.yPixels - 1)):
+		component3 =  "\""
+	    else:
+	 	component3 =  ("\"" + ",")
+	    print (component1 + component2 + component3)
+	print "};"
+
+
+# *** Writing Helper Functions for Main ***
+
+# Function for Creating Variables
+def createVars(argv):
+    # Initializing Input Variables
+    inputFile1 = "bound-sprellpsd.smf"
+    inputFile2 = None
+    inputFile3 = None
+    baseColor1 = "ff0000"
+    baseColor2 = "00ff00"
+    baseColor3 = "0000ff"
+    viewX1 = 0
+    viewY1 = 0
+    viewX2 = 500
+    viewY2 = 500
+    xPRP = 0.0
+    yPRP = 0.0
+    zPRP = 1.0
+    xVRP = 0.0
+    yVRP = 0.0
+    zVRP = 0.0
+    xVPN = 0.0
+    yVPN = 0.0
+    zVPN = -1.0
+    xVUP = 0.0
+    yVUP = 1.0
+    zVUP = 0.0
+    uMinVRC = -0.7
+    vMinVRC = -0.7
+    uMaxVRC = 0.7
+    vMaxVRC = 0.7
+    frontFace = 0.6
+    backFace = -0.6
+    isParallel = False
+
+    # Changing Vatiables Based on User Input
+    for i in range(0, len(argv)):
+        element = argv[i]
+        if element == "-f":
+            inputFile1 = argv[i+1]
+	elif element == "-g":
+	    inputFile2 = argv[i+1]
+	elif element == "-i":
+	    inputFile3 = argv[i+1]
+        elif element == "-j":
+            viewX1 = int(argv[i+1])
+        elif element == "-k":
+            viewY1 = int(argv[i+1])
+        elif element == "-o":
+            viewX2 = int(argv[i+1])
+        elif element == "-p":
+            viewY2 = int(argv[i+1])
+        elif element == "-x":
+            xPRP = float(argv[i+1])
+        elif element == "-y":
+            yPRP = float(argv[i+1])
+        elif element == "-z":
+            zPRP = float(argv[i+1])
+        elif element == "-X":
+            xVRP = float(argv[i+1])
+        elif element == "-Y":
+	    yVRP = float(argv[i+1])
+	elif element == "-Z":
+	    zVRP = float(argv[i+1])
+	elif element == "-q":
+	    xVPN = float(argv[i+1])
+	elif element == "-r":
+	    yVPN = float(argv[i+1])
+	elif element == "-w":
+	    zVPN = float(argv[i+1])
+	elif element == "-Q":
+	    xVUP = float(argv[i+1])
+	elif element == "-R":
+	    yVUP = float(argv[i+1])
+	elif element == "-W":
+	    zVUP = float(argv[i+1])
+	elif element == "-u":
+	    uMinVRC = float(argv[i+1])
+	elif element == "-v":
+	    vMinVRC = float(argv[i+1])
+	elif element == "-U":
+	    uMaxVRC = float(argv[i+1])
+	elif element == "-V":
+	    vMaxVRC = float(argv[i+1])
+	elif element == "-P":
+	    isParallel = True
+	elif element == "-F":
+	    frontFace = float(argv[i+1])
+	elif element == "-B":
+	    backFace = float(argv[i+1])
+
+    # Returning Variables
+    return inputFile1, inputFile2, inputFile3, baseColor1, baseColor2, baseColor3, viewX1, viewY1, viewX2, viewY2, xPRP, yPRP, zPRP, xVRP, yVRP, zVRP, xVPN, yVPN, zVPN, xVUP, yVUP, zVUP, uMinVRC, vMinVRC, uMaxVRC, vMaxVRC, frontFace, backFace, isParallel
+
+
+# Function for Getting Line Endpoints from Input File
+def getMesh(filename):
+    # Opening Input File
+    SMFfile = open(filename, "r")
+
+    # Reading Contents into Variable and Adding as Vertex or Line
+    myMesh = mesh()
+    for line in SMFfile:
+        splitLine = line.split()
+        if splitLine[0] == 'v':
+            vertX = float(splitLine[1])
+            vertY = float(splitLine[2])
+            vertZ = float(splitLine[3])
+            currentVert = vertex(vertX, vertY, vertZ)
+            myMesh.addVertex(currentVert)
+        elif splitLine[0] == 'f':
+            vert1 = int(splitLine[1])
+            vert2 = int(splitLine[2])
+            vert3 = int(splitLine[3])
+            currentFace = face(vert1, vert2, vert3)
+            myMesh.addFace(currentFace)
+
+    # Closing File and Returning Line Information
+    SMFfile.close()
+    return myMesh
+
+
+# Applying Transformations to Points
+def applyLineTransform(x1, y1, x2, y2, scale, rotate, transX, transY):
+
+    # Applying Scale
+    x1 = x1 * scale
+    y1 = y1 * scale
+    x2 = x2 * scale
+    y2 = y2 * scale
+
+    # Applying Rotate
+    tempX1 = x1
+    tempX2 = x2
+    x1 = (x1 * math.cos(math.radians(rotate))) - (y1 * math.sin(math.radians(rotate)))
+    y1 = (tempX1 * math.sin(math.radians(rotate))) + (y1 * math.cos(math.radians(rotate)))
+    x2 = (x2 * math.cos(math.radians(rotate))) - (y2 * math.sin(math.radians(rotate)))
+    y2 = (tempX2 * math.sin(math.radians(rotate))) + (y2 * math.cos(math.radians(rotate)))
+
+    # Applying Translation
+    x1 = x1 + transX
+    y1 = y1 + transY
+    x2 = x2 + transX
+    y2 = y2 + transY
+
+    # Returning New Endpoints
+    return x1, y1, x2, y2
+
+
+# Applying Transformations to Points
+def applyPolyTransform(x1, y1, scale, rotate, transX, transY):
+
+    # Applying Scale
+    x1 = x1 * scale
+    y1 = y1 * scale
+
+    # Applying Rotate
+    tempX1 = x1
+    x1 = (x1 * math.cos(math.radians(rotate))) - (y1 * math.sin(math.radians(rotate)))
+    y1 = (tempX1 * math.sin(math.radians(rotate))) + (y1 * math.cos(math.radians(rotate)))
+
+    # Applying Translation
+    x1 = x1 + transX
+    y1 = y1 + transY
+
+    # Returning New Endpoints
+    return x1, y1
+
+
+# Getting Scale Factor for World to Viewport Scaling
+def getScaleFactor(worldX1, worldY1, worldX2, worldY2, viewX1, viewY1, viewX2, viewY2):
+
+	# Getting Length and Width of World and Viewport Windows
+	worldX = worldX2 - worldX1
+	worldY = worldY2 - worldY1
+	viewX = viewX2 - viewX1
+	viewY = viewY2 - viewY1
+
+	# Calculating Scale Factors
+	scaleX = float(viewX) / float(worldX)
+	scaleY = float(viewY) / float(worldY)
+
+	# Returning Scale Factors
+	return scaleX, scaleY
+
+
+# Function for Multiplying Matrices
+def matrixMultiply(matrixA, matrixB):
+
+	# Declaring Variables
+	aRows = len(matrixA)
+	aColumns = len(matrixA[0])
+	bColumns = len(matrixB[0])
+	matrixC = []
+
+	# Creating Empty Resulting Matrix
+	for i in range(0, aRows):
+		column = []
+		for j in range(0, bColumns):
+			column.append(0)
+		matrixC.append(column)
+
+	# Doing Math for Matrix Multiplication
+	for i in range(0, aRows):
+		for j in range(0, bColumns):
+			for k in range(0, aColumns):
+				matrixC[i][j] += matrixA[i][k] * matrixB[k][j]
+
+	# Returning Resulting Matrix
+	return matrixC
+
+
+# Getting the Length of a Vector
+def vectorLength(vectorX, vectorY, vectorZ):
+	root = ((vectorX*vectorX)+(vectorY*vectorY)+(vectorZ*vectorZ))
+	result = math.sqrt(root)
+	return result
+
+
+# Computing the Cross Product of Vectors
+def crossProduct(vector1X, vector1Y, vector1Z, vector2X, vector2Y, vector2Z):
+	# Computing Values for Resulting Vector
+	vector3X = (vector1Y * vector2Z) - (vector1Z * vector2Y)
+	vector3Y = (vector1Z * vector2X) - (vector1X * vector2Z)
+	vector3Z = (vector1X * vector2Y) - (vector1Y * vector2X)
+
+	# Creating Resulting Vector
+	vector3 = [vector3X, vector3Y, vector3Z]
+	return vector3
+
+
+# Function for Creating Npar or Nper Based on Projection Type
+def createNMatrix(xVRP, yVRP, zVRP, xVPN, yVPN, zVPN, xVUP, yVUP, zVUP, uMinVRC, vMinVRC, uMaxVRC, vMaxVRC, xPRP, yPRP, zPRP, frontFace, backFace, isParallel):
+
+	# * Matrix Translating VRP to Origin *
+
+	tVRPMatrix = [[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]]
+	tVRPMatrix[0][3] = (xVRP * -1)
+	tVRPMatrix[1][3] = (yVRP * -1)
+	tVRPMatrix[2][3] = (zVRP * -1)
+
+	# * Matrix Rotating to Align View with VPN, VUP, and u *
+
+	rMatrix = [[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]]
+
+	# Calculating Z Component
+	resultVPN = vectorLength(xVPN, yVPN, zVPN)
+	r1Z = xVPN / resultVPN
+	r2Z = yVPN / resultVPN
+	r3Z = zVPN / resultVPN
+
+	# Calculating X Component
+	resultRX = crossProduct(xVUP, yVUP, zVUP, r1Z, r2Z, r3Z)
+	crossRXlength = vectorLength(resultRX[0], resultRX[1], resultRX[2])
+	r1X = resultRX[0] / crossRXlength
+	r2X = resultRX[1] / crossRXlength
+	r3X = resultRX[2] / crossRXlength
+
+	# Calculating Y Component
+	resultRY = crossProduct(r1Z, r2Z, r3Z, r1X, r2X, r3X)
+	r1Y = resultRY[0]
+	r2Y = resultRY[1]
+	r3Y = resultRY[2]
+
+	# Adding Values to Rotation Matrix
+	rMatrix[0][0] = r1X
+	rMatrix[0][1] = r2X
+	rMatrix[0][2] = r3X
+	rMatrix[1][0] = r1Y
+	rMatrix[1][1] = r2Y
+	rMatrix[1][2] = r3Y
+	rMatrix[2][0] = r1Z
+	rMatrix[2][1] = r2Z
+	rMatrix[2][2] = r3Z
+
+	# * Matrix Shearing to Make Direction of Projection Parallel to z *
+
+	shMatrix = [[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]]
+	shMatrix[0][2] = ((0.5 * (uMaxVRC + uMinVRC)) - xPRP) / zPRP
+	shMatrix[1][2] = ((0.5 * (vMaxVRC + vMinVRC)) - yPRP) / zPRP
+
+
+	# * Multiplying Rotation and VRP Translation Matrices *
+	multStep1 = matrixMultiply(rMatrix, tVRPMatrix)
+
+	# ** Completing Rest of Steps for Parallel Projection **
+
+	if isParallel:
+
+		# * Matrix Translating into Canonical View Volume *
+
+		tPARMatrix = [[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]]
+		tPARMatrix[0][3] = ((uMaxVRC + uMinVRC) * -1) / 2
+		tPARMatrix[1][3] = ((vMaxVRC + vMinVRC) * -1) / 2
+		tPARMatrix[2][3] = frontFace
+
+		# * Matrix Scaling into Canonical View Volume *
+
+		sPARMatrix = [[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]]
+		sPARMatrix[0][0] = 2 / (uMaxVRC - uMinVRC)
+		sPARMatrix[1][1] = 2 / (vMaxVRC - vMinVRC)
+		sPARMatrix[2][2] = 1 / (frontFace - backFace)
+
+		# * Multiplying Matrices and Calculating Final Matrix *
+		multStep2 = matrixMultiply(shMatrix, multStep1)
+		multStep3 = matrixMultiply(tPARMatrix, multStep2)
+		Npar = matrixMultiply(sPARMatrix, multStep3)
+
+		# * Returning Npar *
+		return Npar
+
+	# ** Completing Rest of Steps for Perspective Projection **
+
+	else:
+
+		# * Matrix Translating PRP to Origin *
+
+		tPERMatrix = [[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]]
+		tPERMatrix[0][3] = xPRP * -1
+		tPERMatrix[1][3] = yPRP * -1
+		tPERMatrix[2][3] = zPRP * -1
+
+		# * Matrix for Scaling into Canonical View Volume *
+
+		sPERMatrix = [[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]]
+		sPERMatrix[0][0] = (2 * zPRP) / ((uMaxVRC - uMinVRC) * (zPRP - backFace))
+		sPERMatrix[1][1] = (2 * zPRP) / ((vMaxVRC - vMinVRC) * (zPRP - backFace))
+		sPERMatrix[2][2] = 1 / (zPRP - backFace)
+
+		# * Multiplying Matrices and Finding Final Matrix *
+
+		multStep2 = matrixMultiply(tPERMatrix, multStep1)
+		multStep3 = matrixMultiply(shMatrix, multStep2)
+		Nper = matrixMultiply(sPERMatrix, multStep3)
+
+		# * Returning Nper *
+		return Nper
+
+
+# Converting Face List to Polygon List
+def facesToPolygons(faceList, vertexList):
+
+	# Initializing Face and Z Value List
+	polygonList = []
+
+	# Converting Each Face
+	for face in faceList:
+		# Intitializing Empty Polygon
+		polygon = []
+
+		# Getting Vertex Indices
+		vIndex1 = face.vertex1
+		vIndex2 = face.vertex2
+		vIndex3 = face.vertex3
+		vIndices = [vIndex1, vIndex2, vIndex3]
+
+		# Getting Vertex Values from Index
+		for vIndex in vIndices:
+			oldVertex = vertexList[vIndex]
+			newVertex = []
+			newVertex.append(oldVertex.x)
+			newVertex.append(oldVertex.y)
+			newVertex.append(oldVertex.z)
+			polygon.append(newVertex)
+
+		# Adding Face Polygon to Polygon List
+		polygonList.append(polygon)
+
+	# Returning Final Polygon List
+	return polygonList
+
+# Getting Minimum Value
+def getMinimum(mesh):
+    minimum = 10000000000000
+    for i in range(0, len(mesh)):
+	currentY = mesh[i][1]
+	if currentY < minimum:
+	    minimum = currentY
+    return minimum
+
+# Getting Maximum Value
+def getMaximum(mesh):
+    maximum = -10000000000000
+    for i in range(0, len(mesh)):
+	currentY = mesh[i][1]
+	if currentY > maximum:
+	    maximum = currentY
+    return maximum
+
+# Calculating Intersection
+def calculateInter(x1, y1, x2, y2, y, bottomY, intersectionList):
+    # Creating Variables
+    row = []
+    changeX = x2 - x1
+    changeY = y2 - y1
+    x = x1 + (changeX / changeY) * (y - y1)
+
+    # Creating Row
+    row.append(x)
+    row.append(y)
+    intersectionList[int(round(y - bottomY))].append(row)
+
+    # Returning New List
+    return intersectionList
+
+
+# *** Running Main Function to Test Class ***
+
+
+# Getting Variables
+inputFile1, inputFile2, inputFile3, baseColor1, baseColor2, baseColor3, viewX1, viewY1, viewX2, viewY2, xPRP, yPRP, zPRP, xVRP, yVRP, zVRP, xVPN, yVPN, zVPN, xVUP, yVUP, zVUP, uMinVRC, vMinVRC, uMaxVRC, vMaxVRC, frontFace, backFace, isParallel = createVars(argv)
+
+# Creating Meshes, Adding Vertices and Faces from File, and Making List of Meshes
+mesh01 = getMesh(inputFile1)
+meshList = [mesh01]
+if inputFile2:
+	mesh02 = getMesh(inputFile2)
+	meshList.append(mesh02)
+if inputFile3:
+	mesh03 = getMesh(inputFile3)
+	meshList.append(mesh03)
+
+# Creating Normalizing Matrix and Applying it to All Vertices
+NMatrix = createNMatrix(xVRP, yVRP, zVRP, xVPN, yVPN, zVPN, xVUP, yVUP, zVUP, uMinVRC, vMinVRC, uMaxVRC, vMaxVRC, xPRP, yPRP, zPRP, frontFace, backFace, isParallel)
+polygonList = []
+for mesh in meshList:
+	mesh.applyNMatrix(NMatrix)
+
+	# Modifying X and Y Values of Vertices for Projection
+	if not isParallel:
+		d = zPRP / (backFace - zPRP)
+		mesh.applyProjection(d)
+
+	# Converting Faces of Mesh to Polygons and Adding to Full Mesh Poly List
+	polygons = facesToPolygons(mesh.faceList, mesh.vertexList)
+	polygonList.append(polygons)
+
+# Creating Bounds for Clipping Polygons
+if isParallel:
+	lowerX = -1
+	lowerY = -1
+	upperX = 1
+	upperY = 1
+else:
+	lowerX = abs(d) * -1
+	lowerY = abs(d) * -1
+	upperX = abs(d)
+	upperY = abs(d)
+
+# Creating Drawings for Clipping and Final Output
+clipDrawing = drawing(lowerX, lowerY, upperX, upperY, frontFace, backFace)
+myDrawing = drawing(0, 0, 500, 500, frontFace, backFace)
+
+# Getting Scale Factor for World to Viewport Conversion
+scaleX, scaleY = getScaleFactor(lowerX, lowerY, upperX, upperY, viewX1, viewY1, viewX2, viewY2)
+
+# Transforming Vertices and Clipping to Viewport
+for i in range(0, len(meshList)):
+	# Creating Variables for Mesh and Polygon List
+	mesh = meshList[i]
+	polygons = polygonList[i]
+	if i == 0:
+	    color = 'red'
+	elif i == 1:
+	    color = 'green'
+	else:
+	    color = 'blue'
+
+	# Transforming to Fit Viewport
+	viewportPolygons = []
+	for polygon in polygons:
+
+		# Clipping Polygon to World Window
+		clippedPolygon = clipDrawing.clipPolygon(polygon, lowerX, lowerY, upperX, upperY)
+
+		# Converting Vertices to Viewport Window Coordinates
+		for vertex in clippedPolygon:
+			# Moving to World Origin
+			vertex[0] = vertex[0] - lowerX
+			vertex[1] = vertex[1] - lowerY
+
+			# Scaling Based on Scaling Factor
+			vertex[0] = vertex[0] * scaleX
+			vertex[1] = vertex[1] * scaleY
+
+			# Moving Up to Viewport Coordinates
+			vertex[0] = vertex[0] + viewX1
+			vertex[1] = vertex[1] + viewY1
+
+		# Clipping Polygon to Viewport Window
+		clippedPolygon = myDrawing.clipPolygon(clippedPolygon, viewX1, viewY1, viewX2, viewY2)
+		viewportPolygons.append(clippedPolygon)
+
+	# Rendering Each Polygon
+	for i in range(0, len(viewportPolygons)):
+	    myDrawing.scanFill(viewportPolygons[i], color, zPRP)
+
+# Outputting Drawing to PBM File
+myDrawing.writeToXPM()
